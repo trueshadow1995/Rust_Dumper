@@ -1,0 +1,10 @@
+C:\Users\phil_\OneDrive\Desktop\Projects\rust-dumper-main\rust-dumper-main\sapphire\dllmain.cpp;C:\Users\phil_\OneDrive\Desktop\Projects\rust-dumper-main\rust-dumper-main\sapphire\bin-int\dllmain.obj
+C:\Users\phil_\OneDrive\Desktop\Projects\rust-dumper-main\rust-dumper-main\sapphire\dumper.cpp;C:\Users\phil_\OneDrive\Desktop\Projects\rust-dumper-main\rust-dumper-main\sapphire\bin-int\dumper.obj
+C:\Users\phil_\OneDrive\Desktop\Projects\rust-dumper-main\rust-dumper-main\sapphire\hde\hde64.cpp;C:\Users\phil_\OneDrive\Desktop\Projects\rust-dumper-main\rust-dumper-main\sapphire\bin-int\hde64.obj
+C:\Users\phil_\OneDrive\Desktop\Projects\rust-dumper-main\rust-dumper-main\sapphire\minhook\buffer.c;C:\Users\phil_\OneDrive\Desktop\Projects\rust-dumper-main\rust-dumper-main\sapphire\bin-int\buffer.obj
+C:\Users\phil_\OneDrive\Desktop\Projects\rust-dumper-main\rust-dumper-main\sapphire\minhook\hde\hde32.c;C:\Users\phil_\OneDrive\Desktop\Projects\rust-dumper-main\rust-dumper-main\sapphire\bin-int\hde32.obj
+C:\Users\phil_\OneDrive\Desktop\Projects\rust-dumper-main\rust-dumper-main\sapphire\minhook\hde\hde64.c;C:\Users\phil_\OneDrive\Desktop\Projects\rust-dumper-main\rust-dumper-main\sapphire\bin-int\hde64.obj
+C:\Users\phil_\OneDrive\Desktop\Projects\rust-dumper-main\rust-dumper-main\sapphire\minhook\hook.c;C:\Users\phil_\OneDrive\Desktop\Projects\rust-dumper-main\rust-dumper-main\sapphire\bin-int\hook.obj
+C:\Users\phil_\OneDrive\Desktop\Projects\rust-dumper-main\rust-dumper-main\sapphire\hook_lib.cpp;C:\Users\phil_\OneDrive\Desktop\Projects\rust-dumper-main\rust-dumper-main\sapphire\bin-int\hook_lib.obj
+C:\Users\phil_\OneDrive\Desktop\Projects\rust-dumper-main\rust-dumper-main\sapphire\minhook\trampoline.c;C:\Users\phil_\OneDrive\Desktop\Projects\rust-dumper-main\rust-dumper-main\sapphire\bin-int\trampoline.obj
+C:\Users\phil_\OneDrive\Desktop\Projects\rust-dumper-main\rust-dumper-main\sapphire\util.cpp;C:\Users\phil_\OneDrive\Desktop\Projects\rust-dumper-main\rust-dumper-main\sapphire\bin-int\util.obj
