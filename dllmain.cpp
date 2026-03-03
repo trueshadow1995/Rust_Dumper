@@ -7,6 +7,14 @@ void main_thread() {
 	HANDLE exception_handler = AddVectoredExceptionHandler( 1, dumper::exception_handler );
 #endif
 
+	// Wait for GameAssembly.dll to be fully loaded
+	printf("[Dumper] Waiting for GameAssembly.dll...\n");
+	while (!GetModuleHandleA("GameAssembly.dll")) {
+		Sleep(100);
+	}
+	Sleep(2000); // Extra delay to ensure it's fully initialized
+	printf("[Dumper] GameAssembly.dll loaded, initializing...\n");
+
 	il2cpp::init();
 	hook_manager::init();
 	dumper::produce();

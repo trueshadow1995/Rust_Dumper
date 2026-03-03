@@ -220,6 +220,7 @@
     <ClCompile Include="minhook\hook.c" />
     <ClCompile Include="hook_lib.cpp" />
     <ClCompile Include="minhook\trampoline.c" />
+    <ClCompile Include="type_info_simple.cpp" />
     <ClCompile Include="util.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -252,6 +253,7 @@
     <ClInclude Include="minhook\minhook.h" />
     <ClInclude Include="minhook\trampoline.h" />
     <ClInclude Include="rust_lib.hpp" />
+    <ClInclude Include="type_info_simple.hpp" />
     <ClInclude Include="unity_lib.hpp" />
     <ClInclude Include="util.hpp" />
   </ItemGroup>

@@ -4,6 +4,7 @@
 #include "unity_lib.hpp"
 #include "rust_lib.hpp"
 #include "hook_lib.hpp"
+#include "type_info_simple.hpp"
 
 #include <windows.h>
 #include <excpt.h>

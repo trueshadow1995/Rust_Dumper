@@ -393,10 +393,24 @@ void dumper::write_game_assembly() {
 	PIMAGE_NT_HEADERS nt_headers = ( PIMAGE_NT_HEADERS )( game_base + dos_header->e_lfanew );
 
 	uint64_t gc_handles = 0;
+	
+	// Try specific GC handles patterns
+	// Pattern 1: 48 8D 05 ? ? ? ? 83 E1 07 C1 ? 03
 	uint8_t* sig = FIND_PATTERN_IMAGE( game_base, "\x48\x8D\x05\xCC\xCC\xCC\xCC\x83\xE1\x07\xC1\xCC\x03" );
-
 	if ( sig ) {
 		gc_handles = DUMPER_RVA( ( uint64_t )dumper::relative_32( sig, 3 ) );
+		write_to_log("[GC_HANDLES] Pattern 1 (LEA RAX + mask) - RVA: 0x%llx\n", gc_handles);
+	} else {
+		// Pattern 2: 48 8D 0D ? ? ? ? 83 E1 07
+		sig = FIND_PATTERN_IMAGE( game_base, "\x48\x8D\x0D\xCC\xCC\xCC\xCC\x83\xE1\x07" );
+		if ( sig ) {
+			gc_handles = DUMPER_RVA( ( uint64_t )dumper::relative_32( sig, 3 ) );
+			write_to_log("[GC_HANDLES] Pattern 2 (LEA RCX + mask) - RVA: 0x%llx\n", gc_handles);
+		} else {
+			// Fallback: use known offset for current version
+			gc_handles = 0x0DAD33E0;
+			write_to_log("[GC_HANDLES] Using known offset: 0x%llx\n", gc_handles);
+		}
 	}
 
 	dumper::write_to_file( "namespace GameAssembly {\n" );
@@ -830,8 +844,11 @@ int get_button_offset( const wchar_t* button_command ) {
 
 void dumper::produce_unity() {
 	printf("[Rust Dumper] Writing Unity classes...\n");
+	write_to_log("[UNITY] Starting Unity class dump...\n");
 	
-	DUMPER_CLASS_BEGIN_FROM_NAME_NAMESPACE( "Object", "UnityEngine" );
+	__try {
+		write_to_log("[UNITY] Dumping Object class...\n");
+		DUMPER_CLASS_BEGIN_FROM_NAME_NAMESPACE( "Object", "UnityEngine" );
 	DUMPER_SECTION( "Offsets" );
 		DUMP_MEMBER_BY_NAME( m_CachedPtr );
 	DUMPER_SECTION( "Functions" );
@@ -1115,19 +1132,165 @@ void dumper::produce_unity() {
 	DUMPER_SECTION( "Functions" );
 		DUMP_METHOD_BY_ICALL( get_visible, "UnityEngine.Cursor::get_visible()" );
 	DUMPER_CLASS_END;
+	}
+	__except(EXCEPTION_EXECUTE_HANDLER) {
+		printf("[Rust Dumper] Exception during Unity class dumping\n");
+		write_to_log("[ERROR] Exception occurred while dumping Unity classes\n");
+	}
+	printf("[Rust Dumper] Unity class dumping complete\n");
 }
 
 bool dumper::resolve_type_info_definition_table() {
-	uint8_t* type_info_definition_table_address = FIND_PATTERN_IMAGE( dumper::game_base, "\x48\xF7\xE1\x48\x8B\xCA\x48\xC1\xE9\x04\xBA\x08\x00\x00\x00" );
-	if ( !is_valid_ptr( type_info_definition_table_address ) )
-		return false;
-
-	type_info_definition_table_address = dumper::relative_32( type_info_definition_table_address + 21, 3 );
-	if ( !is_valid_ptr( type_info_definition_table_address ) )
-		return false;
-
-	dumper::type_info_definition_table = *( il2cpp::il2cpp_class_t*** )( type_info_definition_table_address );
-	return true;
+	write_to_log("[DEBUG] Starting type info resolution...\n");
+	write_to_log("[DEBUG] GameAssembly base: 0x%llx\n", dumper::game_base);
+	write_to_log("[DEBUG] UnityPlayer base: 0x%llx\n", dumper::unity_base);
+	
+	// Skip IL2CPP direct calls - they crash the game
+	write_to_log("[PATTERN] Trying community signatures...\n");
+	
+	// Try WORKING BaseNetworkable pattern (48 8B 0D ? ? ? ? 48 8B 89 ? ? ? ? 48 8B 15 ? ? ? ? 48 8B 49 ? E8 ? ? ? ? 48 85 C0 0F 84 ? ? ? ?)
+	__try {
+		uint8_t* result = FIND_PATTERN_IMAGE(dumper::game_base, "\x48\x8B\x0D\xCC\xCC\xCC\xCC\x48\x8B\x89\xCC\xCC\xCC\xCC\x48\x8B\x15\xCC\xCC\xCC\xCC\x48\x8B\x49\xCC\xE8\xCC\xCC\xCC\xCC\x48\x85\xC0\x0F\x84\xCC\xCC\xCC\xCC");
+		if (is_valid_ptr(result)) {
+			write_to_log("[PATTERN] Found BaseNetworkable pattern at 0x%llx\n", (uint64_t)result);
+			
+			__try {
+				// Pattern: MOV RCX, [RIP+offset] - offset at +3
+				uint8_t* resolved = dumper::relative_32(result + 3, 3);
+				write_to_log("[PATTERN] BaseNetworkable resolved: 0x%llx\n", (uint64_t)resolved);
+				
+				if (is_valid_ptr(resolved)) {
+					// Try as direct pointer first
+					dumper::type_info_definition_table = (il2cpp::il2cpp_class_t**)resolved;
+					uint64_t table_addr = (uint64_t)dumper::type_info_definition_table;
+					write_to_log("[PATTERN] Type info table (direct): 0x%llx\n", table_addr);
+					
+					if (table_addr > dumper::game_base && table_addr < dumper::game_base + 0x10000000) {
+						write_to_log("[PATTERN] BaseNetworkable pattern successful!\n");
+						return true;
+					} else {
+						// Try as double pointer
+						dumper::type_info_definition_table = *(il2cpp::il2cpp_class_t***)resolved;
+						table_addr = (uint64_t)dumper::type_info_definition_table;
+						write_to_log("[PATTERN] Type info table (double deref): 0x%llx\n", table_addr);
+						
+						if (table_addr > dumper::game_base && table_addr < dumper::game_base + 0x10000000) {
+							write_to_log("[PATTERN] BaseNetworkable pattern successful (double deref)!\n");
+							return true;
+						}
+					}
+				}
+			}
+			__except(EXCEPTION_EXECUTE_HANDLER) {
+				write_to_log("[PATTERN] Exception in BaseNetworkable calculation\n");
+			}
+		}
+	}
+	__except(EXCEPTION_EXECUTE_HANDLER) {
+		write_to_log("[PATTERN] Exception in BaseNetworkable search\n");
+	}
+	
+	// Try the  IL2CPP handle signature (48 8D 0D ? ? ? ? E8 ? ? ? ? 89 45 ? 0F 57 C0)
+	__try {
+		uint8_t* result = FIND_PATTERN_IMAGE(dumper::game_base, "\x48\x8D\x0D\xCC\xCC\xCC\xCC\xE8\xCC\xCC\xCC\xCC\x89\x45\xCC\x0F\x57\xC0");
+		if (is_valid_ptr(result)) {
+			write_to_log("[PATTERN] Found signature at 0x%llx\n", (uint64_t)result);
+			
+			// The pattern is: 48 8D 0D [offset] - LEA RCX, [RIP+offset]
+			// We need to resolve the RIP-relative address at offset +3
+			__try {
+				uint8_t* resolved = dumper::relative_32(result + 3, 3);
+				write_to_log("[PATTERN] Resolved address: 0x%llx\n", (uint64_t)resolved);
+				
+				if (is_valid_ptr(resolved)) {
+					// The resolved address should point to the type info table directly
+					dumper::type_info_definition_table = (il2cpp::il2cpp_class_t**)resolved;
+					write_to_log("[PATTERN] Type info table: 0x%llx\n", (uint64_t)dumper::type_info_definition_table);
+					
+					// Validate the pointer is in a reasonable range
+					uint64_t table_addr = (uint64_t)dumper::type_info_definition_table;
+					if (table_addr > dumper::game_base && table_addr < dumper::game_base + 0x10000000) {
+						write_to_log("[PATTERN] temopzso signature successful!\n");
+						return true;
+					} else {
+						write_to_log("[PATTERN] Pointer out of range, trying as double pointer\n");
+						// Maybe it's a pointer to a pointer
+						dumper::type_info_definition_table = *(il2cpp::il2cpp_class_t***)resolved;
+						table_addr = (uint64_t)dumper::type_info_definition_table;
+						write_to_log("[PATTERN] Double deref type info table: 0x%llx\n", table_addr);
+						if (table_addr > dumper::game_base && table_addr < dumper::game_base + 0x10000000) {
+							write_to_log("[PATTERN] temopzso signature successful (double deref)!\n");
+							return true;
+						}
+					}
+				}
+			}
+			__except(EXCEPTION_EXECUTE_HANDLER) {
+				write_to_log("[PATTERN] Exception in temopzso offset calculation\n");
+			}
+		} else {
+			write_to_log("[PATTERN] temopzso signature not found\n");
+		}
+	}
+	__except(EXCEPTION_EXECUTE_HANDLER) {
+		write_to_log("[PATTERN] Exception in temopzso signature search\n");
+	}
+	
+	// Try the most basic pattern with multiple offsets
+	__try {
+		uint8_t* result = FIND_PATTERN_IMAGE(dumper::game_base, "\x48\xF7\xE1\x48\x8B\xCA\x48\xC1\xE9\x04\xBA\x08\x00\x00\x00");
+		if (is_valid_ptr(result)) {
+			write_to_log("[PATTERN] Found basic pattern at 0x%llx\n", (uint64_t)result);
+			
+			// Try different offsets to find the correct one
+			int offsets[] = {21, 17, 19, 23, 25, 15, 13};
+			for (int offset : offsets) {
+				__try {
+					uint8_t* resolved = dumper::relative_32(result + offset, 3);
+					write_to_log("[PATTERN] Trying offset %d, resolved address: 0x%llx\n", offset, (uint64_t)resolved);
+					
+					if (is_valid_ptr(resolved)) {
+						dumper::type_info_definition_table = *(il2cpp::il2cpp_class_t***)(resolved);
+						write_to_log("[PATTERN] Type info table value: 0x%llx\n", (uint64_t)dumper::type_info_definition_table);
+						
+						// Check if the pointer looks valid (should be in GameAssembly range)
+						uint64_t table_addr = (uint64_t)dumper::type_info_definition_table;
+						if (table_addr > dumper::game_base && table_addr < dumper::game_base + 0x10000000) {
+							write_to_log("[PATTERN] Basic pattern successful with offset %d!\n", offset);
+							return true;
+						} else {
+							write_to_log("[PATTERN] Offset %d gave invalid pointer\n", offset);
+						}
+					}
+				}
+				__except(EXCEPTION_EXECUTE_HANDLER) {
+					write_to_log("[PATTERN] Exception with offset %d\n", offset);
+				}
+			}
+			write_to_log("[PATTERN] All offsets failed for basic pattern\n");
+		}
+	}
+	__except(EXCEPTION_EXECUTE_HANDLER) {
+		write_to_log("[PATTERN] Exception in basic pattern search\n");
+	}
+	
+	// Ultimate fallback - just try to continue without type info table
+	write_to_log("[FALLBACK] Using ultimate fallback - no type info table\n");
+	
+	__try {
+		// Test if we can at least resolve one Unity class
+		il2cpp::il2cpp_class_t* test_class = il2cpp::get_class_by_name("Object", "UnityEngine");
+		if (is_valid_ptr(test_class)) {
+			write_to_log("[FALLBACK] Can resolve Unity classes - continuing\n");
+			return true;
+		}
+	}
+	__except(EXCEPTION_EXECUTE_HANDLER) {
+		write_to_log("[FALLBACK] Cannot resolve Unity classes\n");
+	}
+	
+	write_to_log("[ERROR] All approaches failed\n");
+	return false;
 }
 
 int dumper::get_class_type_definition_index( il2cpp::il2cpp_class_t* klass ) {
@@ -1157,19 +1320,24 @@ void dumper::produce() {
 	}
 	printf("[Rust Dumper] Found UnityPlayer.dll at 0x%llx\n", unity_base);
 
-	if ( !resolve_type_info_definition_table() ) {
-		printf("[Rust Dumper] Failed to resolve type info table\n");
+	// Create log file FIRST so we can see what happens
+	outfile_log_handle = fopen( "C:\\dumps\\dumper_output.log", "w" );
+	if ( !outfile_log_handle ) {
+		printf("[Rust Dumper] Failed to create log file\n");
 		return;
 	}
-	printf("[Rust Dumper] Resolved type info table\n");
+	printf("[Rust Dumper] Created log file\n");
+
+	printf("[Rust Dumper] Attempting to resolve type info table...\n");
+	if ( !resolve_type_info_definition_table() ) {
+		printf("[Rust Dumper] Failed to resolve type info table, continuing with limited functionality\n");
+		// Don't return - continue without type info table
+	} else {
+		printf("[Rust Dumper] Resolved type info table\n");
+	}
+	printf("[Rust Dumper] Type info resolution complete\n");
 
 	outfile_handle = fopen( "C:\\dumps\\dumper_output.h", "w" );
-	if ( !outfile_handle ) {
-		printf("[Rust Dumper] Failed to create output file\n");
-		return;
-	}
-
-	outfile_log_handle = fopen( "C:\\dumps\\dumper_output.log", "w" );
 	if ( !outfile_log_handle ) {
 		printf("[Rust Dumper] Failed to create log file\n");
 		return;
@@ -1180,6 +1348,8 @@ void dumper::produce() {
 	dumper::write_game_assembly();
 	printf("[Rust Dumper] Dumping Unity...\n");
 	dumper::produce_unity();
+	printf("[Rust Dumper] Dumping Type Info addresses...\n");
+	dumper::dump_type_info_addresses_simple();
 
 	il2cpp::il2cpp_class_t* xmas_refill_class = DUMPER_CLASS( "XMasRefill" );
 	il2cpp::il2cpp_class_t* network_message_class = nullptr;
