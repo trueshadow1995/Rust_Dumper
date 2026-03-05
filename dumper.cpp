@@ -1804,12 +1804,187 @@ void dumper::produce() {
 			hit_info_class = interfaces.at( 0 )->get_generic_argument_at( 0 );
 		}
 	}
+	
+	// Fallback 1: Try to find HitInfo through BasePlayer methods
+	if (!hit_info_class) {
+		write_to_log("[FALLBACK] Trying to find HitInfo through BasePlayer methods\n");
+		il2cpp::il2cpp_class_t* base_player_class = DUMPER_CLASS( "BasePlayer" );
+		if (base_player_class) {
+			write_to_log("[FALLBACK] BasePlayer class found, searching for method with HitInfo parameter\n");
+			
+			// Iterate through all methods to find one that takes HitInfo-like parameter
+			void* method_iter = nullptr;
+			il2cpp::method_info_t* found_method = nullptr;
+			
+			while (il2cpp::method_info_t* method = base_player_class->methods(&method_iter)) {
+				if (!method || method->param_count() == 0) continue;
+				
+				// Get first parameter type
+				il2cpp::il2cpp_type_t* param_type = method->get_param(0);
+				if (!param_type) continue;
+				
+				il2cpp::il2cpp_class_t* param_class = param_type->klass();
+				if (!param_class) continue;
+				
+				// Check if this class has fields that look like HitInfo (damageTypes, HitEntity, etc.)
+				int field_count = param_class->field_count();
+				if (field_count < 10 || field_count > 30) continue;
+				
+				// Check for Single[] field (damageTypes)
+				void* field_iter = nullptr;
+				bool has_single_array = false;
+				bool has_base_entity = false;
+				
+				while (il2cpp::field_info_t* field = param_class->fields(&field_iter)) {
+					const char* type_name = field->type()->name();
+					if (type_name) {
+						if (strstr(type_name, "Single[]")) has_single_array = true;
+						if (strstr(type_name, "BaseEntity")) has_base_entity = true;
+					}
+				}
+				
+				if (has_single_array) {
+					hit_info_class = param_class;
+					write_to_log("[FALLBACK] Found HitInfo through BasePlayer.%s: %s (fields: %d, has_entity: %d)\n", 
+						method->name(), param_class->name(), field_count, has_base_entity);
+					break;
+				}
+			}
+			
+			if (!hit_info_class) {
+				write_to_log("[FALLBACK] ERROR: No method with HitInfo-like parameter found in BasePlayer\n");
+			}
+		} else {
+			write_to_log("[FALLBACK] ERROR: BasePlayer class not found\n");
+		}
+	}
+	
+	// Fallback 2: Try to find HitInfo through BaseCombatEntity
+	if (!hit_info_class) {
+		write_to_log("[FALLBACK] Trying to find HitInfo through BaseCombatEntity\n");
+		il2cpp::il2cpp_class_t* base_combat_entity = DUMPER_CLASS( "BaseCombatEntity" );
+		if (base_combat_entity) {
+			il2cpp::method_info_t* method = il2cpp::get_method_by_name( base_combat_entity, "OnAttacked" );
+			if (!method) {
+				method = il2cpp::get_method_by_name( base_combat_entity, "Hurt" );
+			}
+			
+			if (method) {
+				il2cpp::il2cpp_type_t* param_type = method->get_param( 0 );
+				if (param_type) {
+					hit_info_class = param_type->klass();
+					write_to_log("[FALLBACK] Found HitInfo through BaseCombatEntity.%s: %s\n", method->name(), hit_info_class->name());
+				}
+			}
+		}
+	}
+	
+	// Fallback 3: Direct class lookup
+	if (!hit_info_class) {
+		write_to_log("[FALLBACK] Trying direct HitInfo class lookup\n");
+		hit_info_class = DUMPER_CLASS( "HitInfo" );
+		if (hit_info_class) {
+			write_to_log("[FALLBACK] Found HitInfo through direct lookup\n");
+		}
+	}
+	
+	// Fallback 4: Search Assembly-CSharp for HitInfo by structure
+	if (!hit_info_class) {
+		write_to_log("[FALLBACK] Searching Assembly-CSharp for HitInfo by structure\n");
+		il2cpp::il2cpp_domain_t* domain = il2cpp::domain_get();
+		if (domain) {
+			size_t assembly_count = 0;
+			il2cpp::il2cpp_assembly_t** assemblies = il2cpp::domain_get_assemblies(domain, &assembly_count);
+			
+			for (size_t i = 0; i < assembly_count; i++) {
+				il2cpp::il2cpp_image_t* image = il2cpp::assembly_get_image(assemblies[i]);
+				if (!image) continue;
+				
+				Il2CppImage* cpp_image = (Il2CppImage*)image;
+				const char* image_name = cpp_image->name;
+				if (!image_name || strcmp(image_name, "Assembly-CSharp") != 0) continue;
+				
+				write_to_log("[FALLBACK] Scanning %zu classes in Assembly-CSharp for classes with Single[] field\n", image->class_count());
+				
+				size_t class_count = image->class_count();
+				std::vector<il2cpp::il2cpp_class_t*> candidates;
+				int classes_with_single_array = 0;
+				
+				for (size_t j = 0; j < class_count; j++) {
+					il2cpp::il2cpp_class_t* klass = image->get_class(j);
+					if (!klass) continue;
+					
+					const char* class_name = klass->name();
+					if (!class_name) continue;
+					
+					int field_count = klass->field_count();
+					if (field_count == 0) continue;
+					
+					void* iter = nullptr;
+					bool has_single_array = false;
+					bool has_base_entity = false;
+					bool has_vector3 = false;
+					
+					while (il2cpp::field_info_t* field = klass->fields(&iter)) {
+						const char* type_name = field->type()->name();
+						if (type_name) {
+							if (strstr(type_name, "Single[]")) has_single_array = true;
+							if (strstr(type_name, "BaseEntity")) has_base_entity = true;
+							if (strstr(type_name, "Vector3")) has_vector3 = true;
+						}
+					}
+					
+					if (has_single_array) {
+						classes_with_single_array++;
+						write_to_log("[FALLBACK] Class with Single[]: %s (fields: %d, has_entity: %d, has_vec3: %d)\n", 
+							class_name, field_count, has_base_entity, has_vector3);
+						
+						if (field_count >= 8 && field_count <= 35 && (has_base_entity || has_vector3)) {
+							candidates.push_back(klass);
+						}
+					}
+				}
+				
+				write_to_log("[FALLBACK] Found %d classes with Single[] field, %zu candidates\n", classes_with_single_array, candidates.size());
+				
+				for (auto candidate : candidates) {
+					void* iter = nullptr;
+					bool has_base_entity = false;
+					while (il2cpp::field_info_t* field = candidate->fields(&iter)) {
+						const char* type_name = field->type()->name();
+						if (type_name && strstr(type_name, "BaseEntity")) {
+							has_base_entity = true;
+							break;
+						}
+					}
+					if (has_base_entity) {
+						hit_info_class = candidate;
+						break;
+					}
+				}
+				
+				if (!hit_info_class && candidates.size() > 0) {
+					hit_info_class = candidates[0];
+				}
+				
+				if (hit_info_class) {
+					write_to_log("[FALLBACK] Selected HitInfo: %s (fields: %d)\n", hit_info_class->name(), hit_info_class->field_count());
+					break;
+				} else {
+					write_to_log("[FALLBACK] No suitable HitInfo candidates found\n");
+				}
+			}
+		}
+	}
 
-	CHECK_RESOLVED_VALUE( VALUE_CLASS, "HitInfo", hit_info_class );
+	CHECK_RESOLVED_VALUE_SOFT( VALUE_CLASS, "HitInfo", hit_info_class );
 
-	il2cpp::il2cpp_class_t* damage_type_list_class = get_class_by_field_type_in_member_class( hit_info_class, "System.Single[]", 2 );
+	il2cpp::il2cpp_class_t* damage_type_list_class = nullptr;
+	if (hit_info_class) {
+		damage_type_list_class = get_class_by_field_type_in_member_class( hit_info_class, "System.Single[]", 2 );
+	}
 
-	CHECK_RESOLVED_VALUE( VALUE_CLASS, "DamageTypeList", damage_type_list_class );
+	CHECK_RESOLVED_VALUE_SOFT( VALUE_CLASS, "DamageTypeList", damage_type_list_class );
 
 	il2cpp::il2cpp_class_t* hitbox_collision_class = DUMPER_CLASS( "HitboxCollision" );
 	il2cpp::il2cpp_class_t* hit_test_class = nullptr;
@@ -1826,8 +2001,8 @@ void dumper::produce() {
 		}
 	}
 
-	CHECK_RESOLVED_VALUE( VALUE_CLASS, "HitboxCollision", hitbox_collision_class );
-	CHECK_RESOLVED_VALUE( VALUE_CLASS, "HitTest", hit_test_class );
+	CHECK_RESOLVED_VALUE_SOFT( VALUE_CLASS, "HitboxCollision", hitbox_collision_class );
+	CHECK_RESOLVED_VALUE_SOFT( VALUE_CLASS, "HitTest", hit_test_class );
 
 	il2cpp::il2cpp_class_t* weapon_rack_class = DUMPER_CLASS( "WeaponRack" );
 	il2cpp::il2cpp_class_t* weapon_rack_slot_class = nullptr;
@@ -1994,14 +2169,14 @@ void dumper::produce() {
 	il2cpp::il2cpp_class_t* convar_graphics_class = il2cpp::search_for_class_by_method_return_type_name( "UnityEngine.FullScreenMode", METHOD_ATTRIBUTE_PRIVATE, METHOD_ATTRIBUTE_STATIC );
 	il2cpp::il2cpp_class_t* convar_graphics_static_class = get_inner_static_class( convar_graphics_class );
 
-	CHECK_RESOLVED_VALUE( VALUE_CLASS, "ConVar.Graphics", convar_graphics_class );
-	CHECK_RESOLVED_VALUE( VALUE_CLASS, "ConVar.Graphics (static)", convar_graphics_static_class );
+	CHECK_RESOLVED_VALUE_SOFT( VALUE_CLASS, "ConVar.Graphics", convar_graphics_class );
+	CHECK_RESOLVED_VALUE_SOFT( VALUE_CLASS, "ConVar.Graphics (static)", convar_graphics_static_class );
 
 	il2cpp::il2cpp_class_t* convar_server_class = il2cpp::search_for_class_by_method_return_type_name( "Rust.Era", METHOD_ATTRIBUTE_PUBLIC, METHOD_ATTRIBUTE_STATIC );
 	il2cpp::il2cpp_class_t* convar_server_static_class = get_inner_static_class( convar_server_class );
 
-	CHECK_RESOLVED_VALUE( VALUE_CLASS, "ConVar.Server", convar_server_class );
-	CHECK_RESOLVED_VALUE( VALUE_CLASS, "ConVar.Server (static)", convar_server_static_class );
+	CHECK_RESOLVED_VALUE_SOFT( VALUE_CLASS, "ConVar.Server", convar_server_class );
+	CHECK_RESOLVED_VALUE_SOFT( VALUE_CLASS, "ConVar.Server (static)", convar_server_static_class );
 
 	il2cpp::il2cpp_class_t* convar_admin_class = nullptr;
 	il2cpp::il2cpp_class_t* convar_admin_static_class = nullptr;
@@ -2031,7 +2206,7 @@ void dumper::produce() {
 		}
 	}
 
-	CHECK_RESOLVED_VALUE( VALUE_CLASS, "ConVar.Admin", convar_admin_class );
+	CHECK_RESOLVED_VALUE_SOFT( VALUE_CLASS, "ConVar.Admin", convar_admin_class );
 
 	il2cpp::il2cpp_class_t* convar_player_class = nullptr;
 	il2cpp::il2cpp_class_t* convar_player_static_class = nullptr;
@@ -2058,17 +2233,37 @@ void dumper::produce() {
 		}
 	}
 
-	CHECK_RESOLVED_VALUE( VALUE_CLASS, "ConVar.Player", convar_player_class );
-	CHECK_RESOLVED_VALUE( VALUE_CLASS, "ConVar.Player (static)", convar_player_static_class );
+	CHECK_RESOLVED_VALUE_SOFT( VALUE_CLASS, "ConVar.Player", convar_player_class );
+	CHECK_RESOLVED_VALUE_SOFT( VALUE_CLASS, "ConVar.Player (static)", convar_player_static_class );
 
-	il2cpp::field_info_t* client_tickrate_field = il2cpp::get_field_if_type_contains( convar_player_static_class, "<System.Int32>", FIELD_ATTRIBUTE_PUBLIC, FIELD_ATTRIBUTE_STATIC );
+	il2cpp::field_info_t* client_tickrate_field = nullptr;
 	il2cpp::il2cpp_class_t* encrypted_value_class = nullptr;
-
-	if ( client_tickrate_field ) {
-		encrypted_value_class = client_tickrate_field->type()->klass();
+	
+	if (convar_player_static_class) {
+		client_tickrate_field = il2cpp::get_field_if_type_contains( convar_player_static_class, "<System.Int32>", FIELD_ATTRIBUTE_PUBLIC, FIELD_ATTRIBUTE_STATIC );
+		if ( client_tickrate_field ) {
+			encrypted_value_class = client_tickrate_field->type()->klass();
+		}
+	}
+	
+	// Fallback: Try to find EncryptedValue through BasePlayer fields
+	if (!encrypted_value_class) {
+		write_to_log("[FALLBACK] Trying to find EncryptedValue through BasePlayer\n");
+		il2cpp::il2cpp_class_t* base_player = DUMPER_CLASS("BasePlayer");
+		if (base_player) {
+			void* iter = nullptr;
+			while (il2cpp::field_info_t* field = base_player->fields(&iter)) {
+				const char* type_name = field->type()->name();
+				if (type_name && strstr(type_name, "<System.UInt64>")) {
+					encrypted_value_class = field->type()->klass();
+					write_to_log("[FALLBACK] Found EncryptedValue through BasePlayer fields\n");
+					break;
+				}
+			}
+		}
 	}
 
-	CHECK_RESOLVED_VALUE( VALUE_CLASS, "EncryptedValue<float>", encrypted_value_class );
+	CHECK_RESOLVED_VALUE_SOFT( VALUE_CLASS, "EncryptedValue<float>", encrypted_value_class );
 
 	il2cpp::method_info_t* convar_client_connect = SEARCH_FOR_METHOD_IN_METHOD_WITH_RETTYPE_PARAM_TYPES(
 		WILDCARD_VALUE( il2cpp::il2cpp_class_t* ),
@@ -2081,11 +2276,31 @@ void dumper::produce() {
 		DUMPER_TYPE_NAMESPACE( "System", "Boolean" )
 	);
 	
-	il2cpp::il2cpp_class_t* convar_client_class = convar_client_connect->klass();
-	il2cpp::il2cpp_class_t* convar_client_static_class = get_inner_static_class( convar_client_class );
+	il2cpp::il2cpp_class_t* convar_client_class = nullptr;
+	il2cpp::il2cpp_class_t* convar_client_static_class = nullptr;
+	
+	if (convar_client_connect) {
+		convar_client_class = convar_client_connect->klass();
+		convar_client_static_class = get_inner_static_class( convar_client_class );
+	} else {
+		// Fallback: Try to find ConVar.Client through console commands
+		write_to_log("[FALLBACK] Trying to find ConVar.Client through console system\n");
+		rust::console_system::command* client_connect_cmd = rust::console_system::client::find( system_c::string_t::create_string( L"client.connect" ) );
+		if (client_connect_cmd) {
+			uint64_t call = client_connect_cmd->call();
+			if (call) {
+				il2cpp::method_info_t* method = il2cpp::method_info_t::from_addr( call );
+				if (method) {
+					convar_client_class = method->klass();
+					convar_client_static_class = get_inner_static_class( convar_client_class );
+					write_to_log("[FALLBACK] Found ConVar.Client through console command\n");
+				}
+			}
+		}
+	}
 
-	CHECK_RESOLVED_VALUE( VALUE_CLASS, "ConVar.Client", convar_client_class );
-	CHECK_RESOLVED_VALUE( VALUE_CLASS, "ConVar.Client (static)", convar_client_static_class );
+	CHECK_RESOLVED_VALUE_SOFT( VALUE_CLASS, "ConVar.Client", convar_client_class );
+	CHECK_RESOLVED_VALUE_SOFT( VALUE_CLASS, "ConVar.Client (static)", convar_client_static_class );
 
 	il2cpp::il2cpp_class_t* buttons_conbutton_class = nullptr;
 	il2cpp::il2cpp_class_t* buttons_class = nullptr;
@@ -2215,17 +2430,23 @@ void dumper::produce() {
 		0
 	);
 
-	il2cpp::il2cpp_type_t* base_melee_process_attack_params[] = { hit_test_class->type() }; 
+	il2cpp::virtual_method_t base_melee_process_attack(nullptr, 0);
+	
+	if (hit_test_class) {
+		il2cpp::il2cpp_type_t* base_melee_process_attack_params[] = { hit_test_class->type() }; 
 
-	il2cpp::virtual_method_t base_melee_process_attack = il2cpp::get_virtual_method_by_return_type_and_param_types(
-		FILT_I( base_melee_do_attack.method->get_fn_ptr<uint64_t>(), 2000, 0  ),
-		DUMPER_CLASS( "BaseMelee" ),
-		DUMPER_TYPE_NAMESPACE( "System", "Void" ),
-		METHOD_ATTRIBUTE_FAMILY,
-		METHOD_ATTRIBUTE_VIRTUAL,
-		base_melee_process_attack_params,
-		_countof( base_melee_process_attack_params )
-	);
+		base_melee_process_attack = il2cpp::get_virtual_method_by_return_type_and_param_types(
+			FILT_I( base_melee_do_attack.method->get_fn_ptr<uint64_t>(), 2000, 0  ),
+			DUMPER_CLASS( "BaseMelee" ),
+			DUMPER_TYPE_NAMESPACE( "System", "Void" ),
+			METHOD_ATTRIBUTE_FAMILY,
+			METHOD_ATTRIBUTE_VIRTUAL,
+			base_melee_process_attack_params,
+			_countof( base_melee_process_attack_params )
+		);
+	} else {
+		write_to_log("[WARNING] Skipping base_melee_process_attack resolution - hit_test_class is null\n");
+	}
 
 	il2cpp::il2cpp_class_t* base_networkable_static_class = get_inner_static_class( DUMPER_CLASS( "BaseNetworkable" ) );
 	il2cpp::il2cpp_class_t* base_networkable_entity_realm_class = nullptr;
@@ -3114,7 +3335,9 @@ void dumper::produce() {
 	DUMPER_CLASS_BEGIN_FROM_PTR( "BasePlayer_Static", base_player_static_class );
 	DUMPER_SECTION( "Offsets" );
 		il2cpp::field_info_t* visible_player_list = il2cpp::get_static_field_if_value_is<void*>( dumper_klass, "<System.UInt64,BasePlayer>", FIELD_ATTRIBUTE_PUBLIC, DUMPER_ATTR_DONT_CARE, []( void* visible_player_list ) { return visible_player_list != nullptr; } );
-		DUMP_MEMBER_BY_X( visiblePlayerList, visible_player_list->offset() );
+		if (visible_player_list) {
+			DUMP_MEMBER_BY_X( visiblePlayerList, visible_player_list->offset() );
+		}
 	DUMPER_CLASS_END;
 
 	DUMPER_CLASS_BEGIN_FROM_NAME( "BasePlayer" );
@@ -3286,15 +3509,19 @@ void dumper::produce() {
 
 		DUMP_VIRTUAL_METHOD( MaxHealth, base_player_max_health );
 
-		il2cpp::virtual_method_t base_player_on_attacked = SEARCH_FOR_VIRTUAL_METHOD_WITH_RETTYPE_PARAM_TYPES(
-			FILT( projectile_do_hit_method->get_fn_ptr<uint64_t>() ),
-			DUMPER_TYPE_NAMESPACE( "System", "Void" ),
-			METHOD_ATTRIBUTE_PUBLIC,
-			DUMPER_ATTR_DONT_CARE,
-			hit_info_class->type()
-		);
+		if (hit_info_class) {
+			il2cpp::virtual_method_t base_player_on_attacked = SEARCH_FOR_VIRTUAL_METHOD_WITH_RETTYPE_PARAM_TYPES(
+				FILT( projectile_do_hit_method->get_fn_ptr<uint64_t>() ),
+				DUMPER_TYPE_NAMESPACE( "System", "Void" ),
+				METHOD_ATTRIBUTE_PUBLIC,
+				DUMPER_ATTR_DONT_CARE,
+				hit_info_class->type()
+			);
 
-		DUMP_VIRTUAL_METHOD( OnAttacked, base_player_on_attacked );
+			DUMP_VIRTUAL_METHOD( OnAttacked, base_player_on_attacked );
+		} else {
+			write_to_log("[WARNING] Skipping OnAttacked dump - hit_info_class is null\n");
+		}
 
 		DUMP_METHOD_BY_RETURN_TYPE_ATTRS( get_idealViewMode,
 			FILT( DUMPER_METHOD( DUMPER_CLASS( "BasePlayer" ), "UpdateViewMode" ) ),
@@ -5058,14 +5285,18 @@ void dumper::produce() {
 		DUMP_MEMBER_BY_FIELD_TYPE_NAME_ATTRS( rotateAngle, "System.Single", FIELD_ATTRIBUTE_ASSEMBLY, DUMPER_ATTR_DONT_CARE );
 	DUMPER_CLASS_END;
 
-	DUMPER_CLASS_BEGIN_FROM_PTR( "ConVar_Client_Static", convar_client_static_class );
-	DUMPER_SECTION( "Offsets" );
-		il2cpp::field_info_t* _camlerp = il2cpp::get_static_field_if_value_is<float>( dumper_klass, "System.Single", FIELD_ATTRIBUTE_PUBLIC, DUMPER_ATTR_DONT_CARE, []( float camlerp ) { return FLOAT_IS_EQUAL( camlerp, CAMLERP, 0.001f ); } );
-		DUMP_MEMBER_BY_X( camlerp, _camlerp->offset() );
+	if (convar_client_static_class) {
+		DUMPER_CLASS_BEGIN_FROM_PTR( "ConVar_Client_Static", convar_client_static_class );
+		DUMPER_SECTION( "Offsets" );
+			il2cpp::field_info_t* _camlerp = il2cpp::get_static_field_if_value_is<float>( dumper_klass, "System.Single", FIELD_ATTRIBUTE_PUBLIC, DUMPER_ATTR_DONT_CARE, []( float camlerp ) { return FLOAT_IS_EQUAL( camlerp, CAMLERP, 0.001f ); } );
+			DUMP_MEMBER_BY_X( camlerp, _camlerp->offset() );
 
-		il2cpp::field_info_t* _camspeed = il2cpp::get_static_field_if_value_is<float>( dumper_klass, "System.Single", FIELD_ATTRIBUTE_PUBLIC, DUMPER_ATTR_DONT_CARE, []( float camspeed ) { return FLOAT_IS_EQUAL( camspeed, CAMSPEED, 0.001f ); } );
-		DUMP_MEMBER_BY_X( camspeed, _camspeed->offset() );
-	DUMPER_CLASS_END;
+			il2cpp::field_info_t* _camspeed = il2cpp::get_static_field_if_value_is<float>( dumper_klass, "System.Single", FIELD_ATTRIBUTE_PUBLIC, DUMPER_ATTR_DONT_CARE, []( float camspeed ) { return FLOAT_IS_EQUAL( camspeed, CAMSPEED, 0.001f ); } );
+			DUMP_MEMBER_BY_X( camspeed, _camspeed->offset() );
+		DUMPER_CLASS_END;
+	} else {
+		write_to_log("[WARNING] Skipping ConVar_Client_Static dump - class not found\n");
+	}
 
 	DUMPER_CLASS_BEGIN_FROM_NAME( "SamSite" );
 	DUMPER_SECTION( "Offsets" );
