@@ -1745,6 +1745,9 @@ bool dumper::resolve_type_info_definition_table() {
     write_to_log("[PATTERN] Exception in basic pattern search\n");
   }
 
+  // All patterns failed — ensure table is null so callers take the safe path
+  dumper::type_info_definition_table = nullptr;
+
   // Ultimate fallback - just try to continue without type info table
   write_to_log("[FALLBACK] Using ultimate fallback - no type info table\n");
 
@@ -1765,6 +1768,8 @@ bool dumper::resolve_type_info_definition_table() {
 }
 
 int dumper::get_class_type_definition_index(il2cpp::il2cpp_class_t* klass) {
+  if (!dumper::type_info_definition_table)
+    return -1;
   for (int i = 0; i < 25000; i++) {
     if (dumper::type_info_definition_table[i] == klass) {
       return i;
